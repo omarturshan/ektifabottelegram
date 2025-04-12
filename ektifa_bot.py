@@ -62,9 +62,9 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 # Webhook endpoint
 @web_app.route("/webhook", methods=["POST"])
 async def webhook():
-    data = await request.get_data()
-    await app.update_queue.put(Update.de_json(data.decode("utf-8"), app.bot))
-    return "OK"
+    json_data = await request.get_json()
+    await app.update_queue.put(Update.de_json(json_data, app.bot))
+    return "ok"
 
 # تشغيل البوت
 if __name__ == "__main__":
