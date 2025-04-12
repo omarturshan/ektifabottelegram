@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ektifa-telegram-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python ektifa_bot.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: <ضع توكن بوت تيليجرام هنا>
+      - key: MONGODB_URI
+        value: <رابط MongoDB Atlas>
+      - key: OPENAI_API_KEY
+        value: <مفتاح OpenAI>
