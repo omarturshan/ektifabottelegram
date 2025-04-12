@@ -71,5 +71,13 @@ async def webhook():
 # تشغيل البوت
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(app.initialize())
-    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config
+
+    async def run():
+        await app.initialize()
+        config = Config()
+        config.bind = [f"0.0.0.0:{os.environ.get('PORT', '5000')}"]
+        await serve(web_app, config)
+
+    asyncio.run(run())
