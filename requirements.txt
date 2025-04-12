@@ -1,5 +1,5 @@
 quart==0.19.4
-flask==2.2.5
+flask==3.0.0
 openai
 pymongo
 python-dotenv
