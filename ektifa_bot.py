@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from quart import Quart, request
 from telegram import Update
+from telegram import Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 from pymongo import MongoClient
@@ -78,6 +79,32 @@ async def webhook():
     data = await request.get_json()
     await telegram_app.update_queue.put(Update.de_json(data, telegram_app.bot))
     return "ok"
+
+
+
+
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+bot = Bot(token=TOKEN)
+
+WEBHOOK_URL = "https://ektifabottelegram.onrender.com/webhook"  # غيّرها لرابط مشروعك
+
+async def set_webhook():
+    await bot.set_webhook(url=WEBHOOK_URL)
+    print("Webhook set!")
+
+import asyncio
+asyncio.run(set_webhook())
+
+
+
+
+
+
+
+
+
+
+
 
 # تشغيل البوت وQuart معًا
 async def main():
