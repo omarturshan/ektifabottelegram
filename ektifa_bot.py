@@ -1,73 +1,52 @@
 import os
+import asyncio
 import requests
+from bs4 import BeautifulSoup
 from quart import Quart, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 from pymongo import MongoClient
-from bs4 import BeautifulSoup
 
+# إعدادات البيئة
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 MONGODB_URI = os.getenv("MONGODB_URI")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PORT = int(os.environ.get("PORT", 5000))
 
-# MongoDB setup
+# إعداد MongoDB
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client["ektifa"]
 chat_collection = db["chats"]
 
-# OpenAI setup
+# إعداد OpenAI
 openai = OpenAI(api_key=OPENAI_API_KEY)
 
-# Telegram app setup
-app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# Quart app for webhook
+# إنشاء تطبيق Quart وTelegram
 web_app = Quart(__name__)
+telegram_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # رسالة ترحيبية
 WELCOME_MESSAGE = "أهلاً بك في أكاديمية اكتفاء! كيف يمكنني مساعدتك اليوم؟"
 
-# دالة لجلب معلومات الأكاديمية من الموقع
-def get_ektifa_info():
+# جلب معلومات من موقع اكتفاء
+def fetch_ektifa_info():
     url = "https://ektifa.academy/"
     response = requests.get(url)
     soup = BeautifulSoup(response.content, "html.parser")
-    
-    # استخراج المعلومات من الصفحة
-    # هذه الأمثلة يجب أن تتكيف مع الهيكل الفعلي للموقع
-    about_section = soup.find("section", {"id": "about"})  # تحديد قسم "من نحن"
-    courses_section = soup.find("section", {"id": "courses"})  # قسم الدورات
-    contact_section = soup.find("section", {"id": "contact"})  # قسم التواصل
 
-    # استخلاص النصوص من الأقسام
-    about_text = about_section.get_text(strip=True) if about_section else "معلومات عن الأكاديمية غير متوفرة."
-    courses_text = courses_section.get_text(strip=True) if courses_section else "الدورات التدريبية غير متوفرة."
-    contact_text = contact_section.get_text(strip=True) if contact_section else "بيانات التواصل غير متوفرة."
+    about_section = soup.find("section", {"id": "about"}) or soup.find("section")
+    text = about_section.get_text(separator="\n").strip() if about_section else "لم يتم العثور على معلومات من الموقع."
+    return text
 
-    # تحضير النص النهائي للرد
-    info = (
-        "🎓 *أكاديمية اكتفاء*\n\n"
-        f"📌 *من نحن:*\n{about_text}\n\n"
-        f"💼 *الدورات التدريبية:*\n{courses_text}\n\n"
-        f"📲 *وسائل التواصل:*\n{contact_text}\n\n"
-        "🌐 *الموقع الرسمي:* https://ektifa.academy/"
-    )
-    
-    return info
-
+# هاندلر الرسائل
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
 
-    # تحقق إذا الرسالة تتعلق بأكاديمية اكتفاء
-    if any(word in user_message.lower() for word in ["اكتفاء", "ektifa"]):
-        reply = get_ektifa_info()  # جلب معلومات الأكاديمية من الموقع
-
-        logo_url = "https://ektifa.academy/images/logo.png"  # شعار الأكاديمية
-        await update.message.reply_photo(photo=logo_url, caption=reply, parse_mode="Markdown")
+    if "اكتفاء" in user_message.lower() or "ektifa" in user_message.lower():
+        reply = fetch_ektifa_info()
     else:
-        # إرسال السؤال إلى OpenAI
         completion = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -76,11 +55,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         )
         reply = completion.choices[0].message.content
-        await update.message.reply_text(reply)
 
-    # حفظ المحادثة في MongoDB
+    await update.message.reply_text(reply)
+
     chat_collection.insert_one({
         "user_id": user_id,
         "message": user_message,
         "reply": reply
     })
+
+# هاندلر بدء المحادثة
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(WELCOME_MESSAGE)
+
+# تسجيل الهاندلرز
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Webhook route
+@web_app.route("/webhook", methods=["POST"])
+async def webhook():
+    data = await request.get_json()
+    await telegram_app.update_queue.put(Update.de_json(data, telegram_app.bot))
+    return "ok"
+
+# تشغيل البوت وQuart معًا
+async def main():
+    await telegram_app.initialize()
+    await telegram_app.start()
+    print(f"Starting Quart server on port {PORT}")
+    await web_app.run_task(host="0.0.0.0", port=PORT)
+
+if __name__ == "__main__":
+    asyncio.run(main())
