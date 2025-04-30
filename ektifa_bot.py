@@ -8,106 +8,101 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from openai import OpenAI
 from pymongo import MongoClient
 
-# --- إعداد المتغيرات من البيئة ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-MONGODB_URI    = os.getenv("MONGODB_URI")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-PORT           = int(os.environ.get("PORT", 5000))
+# إعداد المتغيرات من البيئة
+TELEGRAM_TOKEN  = os.getenv("TELEGRAM_TOKEN")
+MONGODB_URI     = os.getenv("MONGODB_URI")
+OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
+PORT            = int(os.environ.get("PORT", 5000))
 
-# --- إعداد MongoDB ---
-mongo_client = MongoClient(MONGODB_URI)
-db = mongo_client["ektifa"]
+# إعداد MongoDB
+mongo_client    = MongoClient(MONGODB_URI)
+db              = mongo_client["ektifa"]
 chat_collection = db["chats"]
 
-# --- إعداد OpenAI ---
+# إعداد OpenAI
 openai = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- إنشاء تطبيقات Quart و Telegram ---
+# إنشاء تطبيقات Quart وTelegram
 web_app      = Quart(__name__)
 telegram_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# رسالة ترحيبية
 WELCOME_MESSAGE = "أهلاً بك في أكاديمية اكتفاء! كيف يمكنني مساعدتك اليوم؟"
 
-# دالة لجلب المعلومات من الموقع مع HEADERS
 def fetch_ektifa_info():
+    """يجلب بيانات OG من صفحة الأكاديمية ليعرضها في البوت."""
     url = "https://ektifa.academy/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
     except Exception as e:
-        return f"⚠️ حدث خطأ أثناء جلب معلومات الأكاديمية: {e}"
+        return None, f"⚠️ تعذّر جلب بيانات الأكاديمية ({e})"
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(r.text, "html.parser")
 
-    # القسم "من نحن" غالبًا داخل <section> برقم معين أو class
-    about = soup.find("section", {"id": "about"}) or soup.find("div", class_="about-us") or soup
-    about_text = about.get_text(separator="\n").strip()
+    def meta_prop(p):
+        tag = soup.find("meta", property=p)
+        return tag["content"].strip() if tag and tag.has_attr("content") else None
 
-    # الدورات (مثال: جميع عناصر <h3> تحت class="courses")
-    courses = soup.select(".courses h3")
-    courses_text = "\n".join(f"- {c.get_text(strip=True)}" for c in courses) or "غير متوفرة"
-
-    # وسائل التواصل (مثال: روابط <a> داخل footer أو class="social")
-    social = soup.select(".social a")
-    social_text = "\n".join(f"- {a.get_text(strip=True)}: {a['href']}" for a in social) or "غير متوفرة"
+    title       = meta_prop("og:title")       or "أكاديمية اكتفاء"
+    description = meta_prop("og:description") or "أكاديمية اكتفاء للتدريب والاستشارات."
+    image       = meta_prop("og:image")       or "https://ektifa.academy/logo.png"
+    page_url    = meta_prop("og:url")         or url
 
     info = (
-        "🎓 *أكاديمية اكتفاء*\n\n"
-        f"📌 *من نحن:*  \n{about_text}\n\n"
-        f"💼 *الدورات التدريبية:*  \n{courses_text}\n\n"
-        f"📲 *وسائل التواصل:*  \n{social_text}\n\n"
-        "🌐 *الموقع الرسمي:* https://ektifa.academy/"
+        f"*{title}*\n\n"
+        f"{description}\n\n"
+        f"🌐 [الموقع الرسمي]({page_url})"
     )
-    return info
+    return image, info
 
-# --- معالج الرسائل ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text or ""
-    user_id      = update.effective_user.id
+    txt = update.message.text or ""
+    uid = update.effective_user.id
 
-    if "اكتفاء" in user_message.lower() or "ektifa" in user_message.lower():
-        reply = fetch_ektifa_info()
-        # شعار الأكاديمية (لو الرابط ثابت)
-        logo_url = "https://ektifa.academy/_next/image?url=%2Flogo.png&w=256&q=75"
-        await update.message.reply_photo(photo=logo_url, caption=reply, parse_mode="Markdown")
+    if "اكتفاء" in txt.lower() or "ektifa" in txt.lower():
+        image, info = fetch_ektifa_info()
+
+        if image:
+            # أرسل الصورة أولًا
+            await update.message.reply_photo(photo=image)
+        # ثم أرسل النص مقسّم إلى أجزاء لا تتجاوز 1000 حرف
+        MAX = 1000
+        for i in range(0, len(info), MAX):
+            chunk = info[i:i+MAX]
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+        reply = info
     else:
-        completion = openai.chat.completions.create(
+        comp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "أجب كأنك موظف في أكاديمية اكتفاء، بإيجاز ووضوح وبأسلوب ودود."},
-                {"role": "user",   "content": user_message},
+                {"role": "user",   "content": txt},
             ]
         )
-        reply = completion.choices[0].message.content
+        reply = comp.choices[0].message.content
         await update.message.reply_text(reply)
 
-    # حفظ المحادثة
+    # حفظ المحادثة في MongoDB
     chat_collection.insert_one({
-        "user_id": user_id,
-        "message": user_message,
+        "user_id": uid,
+        "message": txt,
         "reply":   reply
     })
 
-# --- معالج /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME_MESSAGE)
 
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# --- نقطة النهاية للويب هوك ---
 @web_app.route("/webhook", methods=["POST"])
 async def webhook():
-    data = await request.get_json()
+    data   = await request.get_json()
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return "OK"
 
-# --- التشغيل المتزامن للبوت والخادم ---
 async def main():
     await telegram_app.initialize()
     await telegram_app.start()
