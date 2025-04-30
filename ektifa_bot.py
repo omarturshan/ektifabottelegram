@@ -1,121 +1,112 @@
 import os
-import asyncio
-import requests
-from bs4 import BeautifulSoup
+import httpx
 from quart import Quart, request
-from telegram import Update
+from telegram import Update, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 from pymongo import MongoClient
 
-# -------------- إعداد المتغيرات --------------
-TELEGRAM_TOKEN  = os.getenv("TELEGRAM_TOKEN")
-MONGODB_URI     = os.getenv("MONGODB_URI")
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
-PORT            = int(os.environ.get("PORT", 5000))
+# --- إعداد البيئة ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+MONGODB_URI = os.getenv("MONGODB_URI")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY")
 
-# رابط موقع الأكاديمية الذي يُسحب منه المحتوى
-EKTIFA_URL      = "https://ektifa-academy.com/"
-
-# -------------- إعداد MongoDB --------------
-mongo_client    = MongoClient(MONGODB_URI)
-db              = mongo_client["ektifa"]
+# --- MongoDB ---
+mongo_client = MongoClient(MONGODB_URI)
+db = mongo_client["ektifa"]
 chat_collection = db["chats"]
 
-# -------------- إعداد OpenAI --------------
+# --- OpenAI ---
 openai = OpenAI(api_key=OPENAI_API_KEY)
 
-# -------------- إنشاء تطبيقات Quart و Telegram --------------
-web_app      = Quart(__name__)
-telegram_app = Application.builder().token(TELEGRAM_TOKEN).build()
+# --- Telegram ---
+app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+# --- Quart Web Server ---
+web_app = Quart(__name__)
 
 WELCOME_MESSAGE = "أهلاً بك في أكاديمية اكتفاء! كيف يمكنني مساعدتك اليوم؟"
 
-# -------------- دالة جلب المعلومات من الموقع --------------
-def fetch_ektifa_info():
-    """يجلب بيانات OG من صفحة الأكاديمية ليعرضها في البوت."""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(EKTIFA_URL, headers=headers, timeout=10)
-        r.raise_for_status()
-    except Exception as e:
-        return None, f"⚠️ تعذّر جلب بيانات الأكاديمية ({e})"
+async def fetch_ektifa_content():
+    url = "https://ektifa-academy.com/"
+    api_url = f"https://api.zenrows.com/v1/?apikey={ZENROWS_API_KEY}&url={url}&js_render=true"
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(api_url)
+        if response.status_code == 200:
+            return response.text
+        else:
+            return None
 
-    def meta_prop(prop_name):
-        tag = soup.find("meta", property=prop_name)
-        return tag["content"].strip() if tag and tag.has_attr("content") else None
+async def extract_about_us_from_html(html):
+    from bs4 import BeautifulSoup
 
-    title       = meta_prop("og:title")       or "أكاديمية اكتفاء"
-    description = meta_prop("og:description") or "أكاديمية اكتفاء للتدريب والاستشارات."
-    image       = meta_prop("og:image")       or EKTIFA_URL + "logo.png"
-    page_url    = meta_prop("og:url")         or EKTIFA_URL
+    soup = BeautifulSoup(html, "html.parser")
+    section = soup.find("section", {"id": "about"}) or soup.find("section", string=lambda x: "من نحن" in x if x else False)
+    
+    if section:
+        text = section.get_text(separator="\n", strip=True)
+        return text[:900]  # Telegram limit safe
+    return None
 
-    info = (
-        f"*{title}*\n\n"
-        f"{description}\n\n"
-        f"🌐 [الموقع الرسمي]({page_url})"
-    )
-    return image, info
-
-# -------------- معالج الرسائل --------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    txt = update.message.text or ""
-    uid = update.effective_user.id
+    user_message = update.message.text
+    user_id = update.effective_user.id
 
-    if "اكتفاء" in txt.lower() or "ektifa" in txt.lower():
-        image, info = fetch_ektifa_info()
+    # تحقق إن كان المستخدم يسأل عن اكتفاء
+    if "اكتفاء" in user_message.lower() or "ektifa" in user_message.lower():
+        html = await fetch_ektifa_content()
+        if html:
+            about_text = await extract_about_us_from_html(html)
+            if about_text:
+                # إرسال الشعار أولاً
+                await update.message.reply_photo("https://ektifa-academy.com/assets/images/logo.png")
+                # إرسال النص
+                await update.message.reply_text(about_text)
+            else:
+                await update.message.reply_text("عذرًا، لم أتمكن من استخراج المعلومات من الموقع حالياً.")
+        else:
+            await update.message.reply_text("عذرًا، لم أتمكن من الوصول للموقع.")
+        return
 
-        # أرسل الصورة أولًا (إذا وجدنا رابط)
-        if image:
-            await update.message.reply_photo(photo=image)
+    # الرد الطبيعي من OpenAI
+    completion = openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "أجب كأنك موظف في أكاديمية اكتفاء، بإيجاز ووضوح وبأسلوب ودود."},
+            {"role": "user", "content": user_message},
+        ]
+    )
+    reply = completion.choices[0].message.content
 
-        # ثم أرسل النص مقسّم إلى أجزاء ≤1000 حرف
-        MAX = 1000
-        for i in range(0, len(info), MAX):
-            chunk = info[i:i+MAX]
-            await update.message.reply_text(chunk, parse_mode="Markdown")
-        reply = info
-    else:
-        # تفاعل مع OpenAI للردود العامة
-        comp = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "أجب كأنك موظف في أكاديمية اكتفاء، وبأسلوب ودود وإيجاز."},
-                {"role": "user",   "content": txt},
-            ]
-        )
-        reply = comp.choices[0].message.content
-        await update.message.reply_text(reply)
+    await update.message.reply_text(reply)
 
-    # حفظ المحادثة في MongoDB
+    # حفظ المحادثة
     chat_collection.insert_one({
-        "user_id": uid,
-        "message": txt,
-        "reply":   reply
+        "user_id": user_id,
+        "message": user_message,
+        "reply": reply
     })
 
-# -------------- معالج /start --------------
+# أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME_MESSAGE)
 
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# تسجيل الأوامر
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# -------------- نقطة ويب هوك --------------
+# Webhook route
 @web_app.route("/webhook", methods=["POST"])
 async def webhook():
-    data   = await request.get_json()
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
-    return "OK"
+    data = await request.get_json()
+    await app.update_queue.put(Update.de_json(data, app.bot))
+    return "ok"
 
-# -------------- تشغيل البوت والخادم معًا --------------
-async def main():
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await web_app.run_task(host="0.0.0.0", port=PORT)
-
+# تشغيل البوت
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+    from bs4 import BeautifulSoup  # مهم لاستخدامه مع ZenRows
+    asyncio.run(app.initialize())
+    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
