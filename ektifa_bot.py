@@ -1,57 +1,73 @@
 import os
-import logging
 from quart import Quart, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from zenrows import ZenRowsClient
+from openai import OpenAI
+from pymongo import MongoClient
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-ZENROWS_API_KEY = os.environ["ZENROWS_API_KEY"]
-BASE_URL = os.environ["RENDER_EXTERNAL_URL"]
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+MONGODB_URI = os.getenv("MONGODB_URI")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# إعداد البوت و ZenRows
-client = ZenRowsClient(ZENROWS_API_KEY)
-app = Quart(__name__)
-application = Application.builder().token(TOKEN).build()
+# MongoDB setup
+mongo_client = MongoClient(MONGODB_URI)
+db = mongo_client["ektifa"]
+chat_collection = db["chats"]
 
-# استخلاص المعلومات من موقع اكتفاء
-async def fetch_ektifa_info():
-    url = "https://ektifa-academy.com/"
-    params = {"js_render": "true"}
-    response = client.get(url, params=params)
-    if response.status_code == 200:
-        return response.text[:3900]  # تجنب تجاوز حد التليجرام
-    else:
-        return "⚠️ لم أستطع الوصول إلى موقع الأكاديمية حالياً."
+# OpenAI setup
+openai = OpenAI(api_key=OPENAI_API_KEY)
 
-# الرد على الرسائل
+# Telegram app setup
+app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+# Quart app for webhook
+web_app = Quart(__name__)
+
+# رسالة ترحيبية
+WELCOME_MESSAGE = "أهلاً بك في أكاديمية اكتفاء! كيف يمكنني مساعدتك اليوم؟"
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if "اكتفاء" in text or "ektifa" in text:
-        reply = await fetch_ektifa_info()
-        await update.message.reply_text(reply)
-    else:
-        await update.message.reply_text("مرحباً! اسألني عن أكاديمية اكتفاء 🌟")
+    user_message = update.message.text
+    user_id = update.effective_user.id
 
-# إضافة المعالجات
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # إرسال السؤال إلى OpenAI
+    completion = openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "أجب كأنك موظف في أكاديمية اكتفاء، بإيجاز ووضوح وبأسلوب ودود."},
+            {"role": "user", "content": user_message},
+        ]
+    )
+
+    reply = completion.choices[0].message.content
+
+    # إرسال الرد للمستخدم
+    await update.message.reply_text(reply)
+
+    # حفظ المحادثة في MongoDB
+    chat_collection.insert_one({
+        "user_id": user_id,
+        "message": user_message,
+        "reply": reply
+    })
+
+# نقطة البداية
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(WELCOME_MESSAGE)
+
+# تسجيل الهاندلرز
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # Webhook endpoint
-@app.post("/webhook")
+@web_app.route("/webhook", methods=["POST"])
 async def webhook():
-    data = await request.get_json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
-    return "ok"
+    data = await request.get_data()
+    await app.update_queue.put(Update.de_json(data.decode("utf-8"), app.bot))
+    return "OK"
 
-# إعداد Webhook
-@app.before_serving
-async def setup_webhook():
-    webhook_url = f"{BASE_URL}/webhook"
-    await application.bot.set_webhook(webhook_url)
-
-# تشغيل التطبيق
+# تشغيل البوت
 if __name__ == "__main__":
     import asyncio
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(app.run_task(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))))
+    asyncio.run(app.initialize())
+    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
