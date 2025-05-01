@@ -13,6 +13,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 MONGODB_URI = os.getenv("MONGODB_URI")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY")
+WEBHOOK_URL = "https://ektifabottelegram.onrender.com/webhook"
 
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client["ektifa"]
@@ -87,6 +88,24 @@ if __name__ == "__main__":
     asyncio.run(set_webhook())
 
 
+
+
+
+def set_webhook():
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+    payload = {"url": WEBHOOK_URL}
+    response = requests.post(url, json=payload)
+    
+    if response.status_code == 200:
+        print("✅ تم تفعيل الـ Webhook بنجاح.")
+        print("Response:", response.json())
+    else:
+        print("❌ فشل في تفعيل الـ Webhook.")
+        print("Status Code:", response.status_code)
+        print("Response:", response.text)
+
+if __name__ == "__main__":
+    set_webhook()
 
 
 
