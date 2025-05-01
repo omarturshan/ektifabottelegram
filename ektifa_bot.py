@@ -1,112 +1,57 @@
 import os
-import httpx
+import logging
 from quart import Quart, request
-from telegram import Update, InputMediaPhoto
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from openai import OpenAI
-from pymongo import MongoClient
+from zenrows import ZenRowsClient
 
-# --- إعداد البيئة ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-MONGODB_URI = os.getenv("MONGODB_URI")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY")
+TOKEN = os.environ["BOT_TOKEN"]
+ZENROWS_API_KEY = os.environ["ZENROWS_API_KEY"]
+BASE_URL = os.environ["RENDER_EXTERNAL_URL"]
 
-# --- MongoDB ---
-mongo_client = MongoClient(MONGODB_URI)
-db = mongo_client["ektifa"]
-chat_collection = db["chats"]
+# إعداد البوت و ZenRows
+client = ZenRowsClient(ZENROWS_API_KEY)
+app = Quart(__name__)
+application = Application.builder().token(TOKEN).build()
 
-# --- OpenAI ---
-openai = OpenAI(api_key=OPENAI_API_KEY)
-
-# --- Telegram ---
-app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# --- Quart Web Server ---
-web_app = Quart(__name__)
-
-WELCOME_MESSAGE = "أهلاً بك في أكاديمية اكتفاء! كيف يمكنني مساعدتك اليوم؟"
-
-async def fetch_ektifa_content():
+# استخلاص المعلومات من موقع اكتفاء
+async def fetch_ektifa_info():
     url = "https://ektifa-academy.com/"
-    api_url = f"https://api.zenrows.com/v1/?apikey={ZENROWS_API_KEY}&url={url}&js_render=true"
+    params = {"js_render": "true"}
+    response = client.get(url, params=params)
+    if response.status_code == 200:
+        return response.text[:3900]  # تجنب تجاوز حد التليجرام
+    else:
+        return "⚠️ لم أستطع الوصول إلى موقع الأكاديمية حالياً."
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(api_url)
-        if response.status_code == 200:
-            return response.text
-        else:
-            return None
-
-async def extract_about_us_from_html(html):
-    from bs4 import BeautifulSoup
-
-    soup = BeautifulSoup(html, "html.parser")
-    section = soup.find("section", {"id": "about"}) or soup.find("section", string=lambda x: "من نحن" in x if x else False)
-    
-    if section:
-        text = section.get_text(separator="\n", strip=True)
-        return text[:900]  # Telegram limit safe
-    return None
-
+# الرد على الرسائل
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
+    text = update.message.text.lower()
+    if "اكتفاء" in text or "ektifa" in text:
+        reply = await fetch_ektifa_info()
+        await update.message.reply_text(reply)
+    else:
+        await update.message.reply_text("مرحباً! اسألني عن أكاديمية اكتفاء 🌟")
 
-    # تحقق إن كان المستخدم يسأل عن اكتفاء
-    if "اكتفاء" in user_message.lower() or "ektifa" in user_message.lower():
-        html = await fetch_ektifa_content()
-        if html:
-            about_text = await extract_about_us_from_html(html)
-            if about_text:
-                # إرسال الشعار أولاً
-                await update.message.reply_photo("https://ektifa-academy.com/assets/images/logo.png")
-                # إرسال النص
-                await update.message.reply_text(about_text)
-            else:
-                await update.message.reply_text("عذرًا، لم أتمكن من استخراج المعلومات من الموقع حالياً.")
-        else:
-            await update.message.reply_text("عذرًا، لم أتمكن من الوصول للموقع.")
-        return
+# إضافة المعالجات
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # الرد الطبيعي من OpenAI
-    completion = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "أجب كأنك موظف في أكاديمية اكتفاء، بإيجاز ووضوح وبأسلوب ودود."},
-            {"role": "user", "content": user_message},
-        ]
-    )
-    reply = completion.choices[0].message.content
-
-    await update.message.reply_text(reply)
-
-    # حفظ المحادثة
-    chat_collection.insert_one({
-        "user_id": user_id,
-        "message": user_message,
-        "reply": reply
-    })
-
-# أمر /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(WELCOME_MESSAGE)
-
-# تسجيل الأوامر
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-# Webhook route
-@web_app.route("/webhook", methods=["POST"])
+# Webhook endpoint
+@app.post("/webhook")
 async def webhook():
     data = await request.get_json()
-    await app.update_queue.put(Update.de_json(data, app.bot))
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
     return "ok"
 
-# تشغيل البوت
+# إعداد Webhook
+@app.before_serving
+async def setup_webhook():
+    webhook_url = f"{BASE_URL}/webhook"
+    await application.bot.set_webhook(webhook_url)
+
+# تشغيل التطبيق
 if __name__ == "__main__":
     import asyncio
-    from bs4 import BeautifulSoup  # مهم لاستخدامه مع ZenRows
-    asyncio.run(app.initialize())
-    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(app.run_task(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))))
