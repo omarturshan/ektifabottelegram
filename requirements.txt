@@ -3,7 +3,6 @@ pymongo
 python-dotenv
 aiohttp
 requests
-beautifulsoup4
 requests
 scrapfly-sdk
 quart==0.18.4
