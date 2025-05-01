@@ -5,5 +5,6 @@ flask==2.2.5
 werkzeug==2.3.7
 requests==2.31.0
 bs4==0.0.1
-pymongo[srv]==4.6.1
+pymongo==4.6.3
 zenrows==1.4.0
+hypercorn==0.16.0
