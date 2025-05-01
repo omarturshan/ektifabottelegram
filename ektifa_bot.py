@@ -10,6 +10,7 @@ from pymongo import MongoClient
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 MONGODB_URI = os.getenv("MONGODB_URI")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+Webhook= os.getenv("Webhook")
 
 # إعداد MongoDB
 mongo_client = MongoClient(MONGODB_URI)
