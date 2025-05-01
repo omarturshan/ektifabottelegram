@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from zenrows import ZenRowsClient
 
-TOKEN = os.environ["BOT_TOKEN"]
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ZENROWS_API_KEY = os.environ["ZENROWS_API_KEY"]
 BASE_URL = os.environ["RENDER_EXTERNAL_URL"]
 
