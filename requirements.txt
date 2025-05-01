@@ -2,6 +2,7 @@ python-telegram-bot==20.7
 openai==1.14.2
 quart==0.18.4
 flask==2.2.5
+werkzeug==2.3.7
 requests==2.31.0
 bs4==0.0.1
 pymongo[srv]==4.6.1
