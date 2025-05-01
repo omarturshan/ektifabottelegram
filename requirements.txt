@@ -8,6 +8,5 @@ requests
 beautifulsoup4
 requests
 scrapfly-sdk
-python-telegram-bot==20.7
 quart==0.18.4
-zenrows==1.5.0
+zenrows==1.4.0
