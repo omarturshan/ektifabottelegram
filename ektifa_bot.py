@@ -44,7 +44,7 @@ def fetch_ektifa_info():
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
-    print("📩 Received message:", update.message.text)
+    print("📩 Received message:", user_message)
 
 
     if any(keyword in user_message.lower() for keyword in ["اكتفاء", "من هي اكتفاء", "ما هي اكاديمية اكتفاء", "ektifa"]):
