@@ -41,7 +41,9 @@ def fetch_ektifa_info():
     return "لم أتمكن من جلب المعلومات من الموقع حالياً."
 
 # الرد على الرسائل
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE
+    user_message = update.message.text
+    user_id = update.effective_user.id
     print("📩 Received message:", update.message.text)
 
 
