@@ -3,41 +3,44 @@ import json
 import requests
 import asyncio
 from quart import Quart, request
-from telegram import Bot
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from openai import OpenAI
 from pymongo import MongoClient
+from bs4 import BeautifulSoup
 
+# إعداد المتغيرات
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 MONGODB_URI = os.getenv("MONGODB_URI")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY")
 
-
+# اتصال MongoDB
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client["ektifa"]
 chat_collection = db["chats"]
 
+# إعداد OpenAI
 openai = OpenAI(api_key=OPENAI_API_KEY)
+
+# إعداد التطبيقات
 app = Application.builder().token(TELEGRAM_TOKEN).build()
 web_app = Quart(__name__)
 
 WELCOME_MESSAGE = "أهلاً بك في أكاديمية اكتفاء! كيف يمكنني مساعدتك اليوم؟"
 
-# دالة لجلب معلومات من موقع اكتفاء باستخدام ZenRows
+# دالة لجلب معلومات من ZenRows
 def fetch_ektifa_info():
     url = "https://ektifa-academy.com/about-us"
     zen_api = f"https://api.zenrows.com/v1/?apikey={ZENROWS_API_KEY}&url={url}&js_render=true"
     response = requests.get(zen_api)
     if response.status_code == 200:
-        from bs4 import BeautifulSoup
         soup = BeautifulSoup(response.text, "html.parser")
         content = soup.get_text(separator="\n").strip()
-        return content[:4000]  # Telegram limit
-    else:
-        return "لم أتمكن من جلب المعلومات من الموقع حالياً."
+        return content[:4000]
+    return "لم أتمكن من جلب المعلومات من الموقع حالياً."
 
+# الرد على الرسائل
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
@@ -62,53 +65,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "reply": reply
     })
 
+# أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME_MESSAGE)
 
+# ربط المعالجات
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+# Route للـ Webhook
 @web_app.route("/webhook", methods=["POST"])
 async def webhook():
     data = await request.get_data()
-    update = Update.de_json(json.loads(data.decode("utf-8")), bot=app.bot)
+    update = Update.de_json(json.loads(data.decode("utf-8")), app.bot)
     await app.update_queue.put(update)
     return "OK"
 
+# التشغيل الكامل
+async def main():
+    await app.initialize()
 
-
-async def set_webhook():
-    TOKEN = os.getenv("TELEGRAM_TOKEN")
-    bot = Bot(token=TOKEN)
-    url = "https://ektifabottelegram.onrender.com/webhook"  # غير هذا للرابط الصحيح
-    success = await bot.set_webhook(url)
-    print("Webhook set:", success)
-
-if __name__ == "__main__":
-    asyncio.run(set_webhook())
-
-
-
-
-
-if __name__ == "__main__":
-    import asyncio
-    import telegram
-
-    asyncio.run(app.initialize())
-
-    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    # تعيين Webhook
+    bot = Bot(token=TELEGRAM_TOKEN)
     webhook_url = "https://ektifabottelegram.onrender.com/webhook"
-    try:
-        bot.delete_webhook()
-        bot.set_webhook(url=webhook_url)
-        print("✅ Webhook تم تفعيله على:", webhook_url)
-    except telegram.error.TelegramError as e:
-        print("❌ فشل في تفعيل الـ Webhook.")
-        print(f"Status Code: {e}")
+    await bot.delete_webhook()
+    success = await bot.set_webhook(url=webhook_url)
+    print("✅ Webhook تم تفعيله:", success)
 
-    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # تشغيل السيرفر
+    await web_app.run_task(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
-
-
-
+if __name__ == "__main__":
+    asyncio.run(main())
