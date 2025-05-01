@@ -42,8 +42,8 @@ def fetch_ektifa_info():
 
 # الرد على الرسائل
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
+    print("📩 Received message:", update.message.text)
+
 
     if any(keyword in user_message.lower() for keyword in ["اكتفاء", "من هي اكتفاء", "ما هي اكاديمية اكتفاء", "ektifa"]):
         reply = fetch_ektifa_info()
@@ -93,7 +93,7 @@ async def main():
     print("✅ Webhook تم تفعيله:", success)
 
     # تشغيل السيرفر
-    await web_app.run_task(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    await web_app.run_task(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
     asyncio.run(main())
