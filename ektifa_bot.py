@@ -1,7 +1,9 @@
 import os
 import json
 import requests
+import asyncio
 from quart import Quart, request
+from telegram import Bot
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
@@ -68,9 +70,25 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 @web_app.route("/webhook", methods=["POST"])
 async def webhook():
     data = await request.get_data()
-    update = Update.de_json(json.loads(data.decode("utf-8")), app.bot)
+    update = Update.de_json(json.loads(data.decode("utf-8")), bot=app.bot)
     await app.update_queue.put(update)
     return "OK"
+
+
+
+async def set_webhook():
+    TOKEN = os.getenv("TELEGRAM_TOKEN")
+    bot = Bot(token=TOKEN)
+    url = "https://ektifabottelegram.onrender.com/webhook"  # غير هذا للرابط الصحيح
+    success = await bot.set_webhook(url)
+    print("Webhook set:", success)
+
+if __name__ == "__main__":
+    asyncio.run(set_webhook())
+
+
+
+
 
 if __name__ == "__main__":
     import asyncio
