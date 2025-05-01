@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 from quart import Quart, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -65,7 +66,7 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 @web_app.route("/webhook", methods=["POST"])
 async def webhook():
     data = await request.get_data()
-    update = Update.de_json(data.decode("utf-8"), app.bot)
+    update = Update.de_json(json.loads(data.decode("utf-8")), app.bot)
     await app.update_queue.put(update)
     return "OK"
 
